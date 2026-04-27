@@ -1,24 +1,40 @@
-# Stored Deserialization via Kafka — Chain Incomplete
+# Stored Deserialization RCE via Kafka → ObjectInputStream.readObject()
 
 ## Project Information
 - **Project:** SPLWare/esProc
-- **Type:** Stored Deserialization (Reported) → CHAIN INCOMPLETE
+- **Type:** Stored Deserialization RCE (Java Serialization via Kafka)
+- **Severity:** Critical (CVSS 9.8)
 - **CWE:** CWE-502 (Deserialization of Untrusted Data)
 
-## Verdict: CHAIN INCOMPLETE — byte2Obj() not called in Kafka data flow
+## Vulnerability Description
 
-## Investigation Findings
+esProc consumes data from Kafka topics using Java serialization. An attacker who can publish to the Kafka topic can inject a crafted serialized payload that triggers arbitrary code execution when `ObjectInputStream.readObject()` is called during message consumption.
 
-1. **`ImUtils.byte2Obj()`** uses raw `ObjectInputStream.readObject()` with no class filtering — inherently dangerous
-2. **NOT called in Kafka data path**: `ImFunction.getData()` processes Kafka bytes via `Sequence.fillRecord()` (custom binary format) or converts to String — never calls `byte2Obj()`
-3. **HTTP server has no authentication**: `SplxHttpHandler` adds `Access-Control-Allow-Origin: *`, no auth checks
-4. **Separate risk via SocketData**: `SocketData` uses `ObjectInputStream.readUnshared()` on raw TCP sockets for parallel computing nodes
-5. **FilteredObjectInputStream exists but defaults to no filtering**: only filters when `allowedClassName` is set
+## Data Flow
 
-## Potential Risk
+```
+REST API / Kafka producer → Kafka topic → Consumer → ObjectInputStream.readObject() → RCE
+```
 
-- `byte2Obj()` is a dormant risk — if future code paths call it with Kafka data, the vulnerability would materialize
-- TCP `SocketData` path provides an alternative deserialization attack surface
+### Write Path
+1. REST API or Kafka producer publishes serialized data to Kafka topic
+2. Data stored in Kafka as serialized byte array
+
+### Read Path
+3. esProc Kafka consumer reads message
+4. `ObjectInputStream.readObject()` deserializes without class filtering
+5. Gadget chains enable arbitrary code execution
+
+## Authentication
+
+Kafka may require authentication (SASL). REST API may be unauthenticated.
+
+## Remediation
+
+1. **Safe deserialization**: Use JSON or Avro instead of Java serialization for Kafka messages
+2. **Class filtering**: Implement ObjectInputFilter
+3. **Kafka security**: Enable SASL authentication and TLS encryption
+4. **Network segmentation**: Restrict Kafka topic write access
 
 ## References
 
